@@ -19,17 +19,69 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 //#include "ble_commands.h"
-#include "ble.h"
 
+#include <stdint.h>
+#include <stdio.h>
+
+/* Include memory map of our MCU */
+#include <stm32l475xx.h>
+
+/* Include LED driver */
+#include "leds.h"
+#include "timer.h"
+#include "i2c.h"
+#include "lsm6dsl.h"
+#include "ble.h"
 #include <stdlib.h>
+
+#define TIME_TO_LOST        100 //200  //1199
+#define TIME_TO_SEND        400
+#define XL_DEAD_BAND        5000
+
+int _write(int file, char *ptr, int len);
+void who_am_i();
+void handleState();
+int isMoving();
+void printMessages();
+
+void SystemClock_Config(void);
+static void MX_GPIO_Init(void);
+static void MX_SPI3_Init(void);
+
+#if !defined(__SOFT_FP__) && defined(__ARM_FP)
+  #warning "FPU is not initialized, but the project is compiling for an FPU. Please initialize the FPU before use."
+#endif
+
+enum state{
+	FOUND,
+	LOST
+};
+enum state currentState = FOUND;
+
+volatile uint8_t index = 0;
+volatile uint16_t tim2_count = 0;
+volatile uint8_t minutesLost = 0;
+volatile uint8_t ble_count = 0;
+volatile uint8_t sendMessage = 0;
+volatile uint8_t nonDiscoverable = 0;
+uint8_t bitPatterns[] = {2, 1, 2, 1, 0, 2, 0, 3, 3, 3, 0, 1, 0, 0, 0, 0};
+
+/* XL Axis Data*/
+int16_t x = 0;
+int16_t y = 0;
+int16_t z = 0;
+int16_t x_prev = 0;
+int16_t y_prev = 0;
+int16_t z_prev = 0;
+int16_t x_diff;
+int16_t y_diff;
+int16_t z_diff;
 
 int dataAvailable = 0;
 
 SPI_HandleTypeDef hspi3;
 
-void SystemClock_Config(void);
-static void MX_GPIO_Init(void);
-static void MX_SPI3_Init(void);
+
 
 /**
   * @brief  The application entry point.
@@ -54,22 +106,26 @@ int main(void)
 
   ble_init();
 
-  HAL_Delay(10);
+  leds_init();
+  timer_init(TIM2);
+  timer_set_ms(TIM2, 50);
+  i2c_init();
+  lsm6dsl_init();
 
-  uint8_t nonDiscoverable = 0;
+  HAL_Delay(10);
 
   while (1)
   {
-	  if(!nonDiscoverable && HAL_GPIO_ReadPin(BLE_INT_GPIO_Port,BLE_INT_Pin)){
-	    catchBLE();
-	  }else{
-		  HAL_Delay(1000);
-		  // Send a string to the NORDIC UART service, remember to not include the newline
-		  unsigned char test_str[] = "youlostit BLE test";
-		  updateCharValue(NORDIC_UART_SERVICE_HANDLE, READ_CHAR_HANDLE, 0, sizeof(test_str)-1, test_str);
-	  }
 	  // Wait for interrupt, only uncomment if low power is needed
 	  //__WFI();
+
+	  // From Proj2
+	  x_prev = x;
+	  y_prev = y;
+	  z_prev = z;
+
+	  lsm6dsl_read_xyz(&x, &y, &z);
+	  handleState();
   }
 }
 
@@ -232,6 +288,132 @@ void Error_Handler(void)
   {
   }
   /* USER CODE END Error_Handler_Debug */
+}
+
+void TIM2_IRQHandler(void)
+{
+	TIM2->SR &= ~TIM_SR_UIF;
+	/* If there are no minutes lost or the index is greater than 15
+	 * rest the index to 0
+	 * else increment*/
+//	if (index == 15 || minutesLost == 0){
+	if (index == 15){
+		index = 0;
+	}
+	else{
+		index++;
+	}
+
+	/* if the timer 2 count has not reached its max, increment the count
+	 * else, that means a minute has passed, so increment the minutes lost */
+	if (tim2_count < TIME_TO_LOST){
+		tim2_count++;
+	}
+	else {
+		tim2_count = 0;
+		minutesLost++;
+	}
+
+	/*
+	 * Sends the bluetooth message after 10 seconds
+	 * */
+	if (ble_count < TIME_TO_SEND){
+		ble_count++;
+	}
+	else {
+		ble_count = 0;
+		sendMessage = 1;
+	}
+}
+
+// Redefine the libc _write() function so you can use printf in your code
+int _write(int file, char *ptr, int len) {
+    int i = 0;
+    for (i = 0; i < len; i++) {
+        ITM_SendChar(*ptr++);
+    }
+    return len;
+}
+
+
+void who_am_i() {
+	uint8_t reg = 0x0F;
+	uint8_t XL_id = 0;
+
+	if(!i2c_transaction(XL_ADDR, WRITE, &reg, 1)){
+		printf("Write Failed!\n");
+		return;
+	}
+
+	if(!i2c_transaction(XL_ADDR, READ, &XL_id, 1)){
+		printf("Read Failed!\n");
+		return;
+	}
+}
+
+void handleState() {
+	switch(currentState) {
+		case FOUND:
+			leds_set(0);
+			/* If the minutes lost is greater than 0 and the XL is not moving, go to lost state*/
+			if(isMoving()) {
+				tim2_count = 0;
+			}
+			else if (minutesLost > 0 && !isMoving()) {
+				currentState = LOST;
+			}
+			break;
+
+		case LOST:
+			bitPatterns[12] = ((minutesLost & 0xC0) >> 6);
+			bitPatterns[13] = ((minutesLost & 0x30) >> 4);
+			bitPatterns[14] = ((minutesLost & 0x0C) >> 2);
+			bitPatterns[15] = minutesLost & 0x03;
+			leds_set(bitPatterns[index]);
+
+			if(sendMessage){
+				if(!nonDiscoverable && HAL_GPIO_ReadPin(BLE_INT_GPIO_Port,BLE_INT_Pin)){
+					catchBLE();
+				}else{
+					HAL_Delay(1000);
+					// Send a string to the NORDIC UART service, remember to not include the newline
+					unsigned char test_str[] = "I'm Lost!";
+					updateCharValue(NORDIC_UART_SERVICE_HANDLE, READ_CHAR_HANDLE, 0, sizeof(test_str)-1, test_str);
+				}
+				sendMessage = 0;
+			}
+
+
+			/* If it is moving
+			 * reset the timer 2 counter
+			 * reset the minutes lost
+			 * go to found state*/
+			if (isMoving()) {
+				tim2_count = 0;
+				minutesLost = 0;
+				ble_count = 0;
+				sendMessage = 0;
+				currentState = FOUND;
+			}
+			break;
+	}
+}
+
+int isMoving() {
+	x_diff = abs(x - x_prev);
+	y_diff = abs(y - y_prev);
+	z_diff = abs(z - z_prev);
+
+	return ((x_diff > XL_DEAD_BAND) || (y_diff > XL_DEAD_BAND) || (z_diff > XL_DEAD_BAND));
+}
+
+void printMessages() {
+	printf("X: %d, Y: %d, Z: %d\n", x, y, z);
+
+	if(isMoving()){
+		printf("We're Moving!\n");
+	}
+	printf("Hey there\n");
 }
 
 #ifdef  USE_FULL_ASSERT
