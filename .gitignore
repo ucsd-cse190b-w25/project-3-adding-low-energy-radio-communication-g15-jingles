@@ -189,3 +189,4 @@ youlostit-ble/youlostit-ble.launch
 *.cyclo
 /youlostit-ble/Debug
 /youlostit-ble/.settings
+/.metadata
