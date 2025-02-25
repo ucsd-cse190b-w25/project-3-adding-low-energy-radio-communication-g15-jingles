@@ -189,3 +189,5 @@ youlostit-ble/youlostit-ble.launch
 *.cyclo
 /youlostit-ble/Debug
 /youlostit-ble/.settings
+youlostit-ble/Debug/Core/Src/main.d
+*.launch
