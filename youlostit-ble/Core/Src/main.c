@@ -22,6 +22,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 /* Include memory map of our MCU */
 #include <stm32l475xx.h>
@@ -34,15 +35,13 @@
 #include "ble.h"
 #include <stdlib.h>
 
-#define TIME_TO_LOST        100 //200  //1199
-#define TIME_TO_SEND        400
+#define TIME_TO_LOST        99 //200  //1199
+#define TIME_TO_SEND        199
 #define XL_DEAD_BAND        5000
 
-int _write(int file, char *ptr, int len);
-void who_am_i();
 void handleState();
 int isMoving();
-void printMessages();
+void lostMessage();
 
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
@@ -58,13 +57,11 @@ enum state{
 };
 enum state currentState = FOUND;
 
-volatile uint8_t index = 0;
-volatile uint16_t tim2_count = 0;
+volatile uint16_t tim2Count = 0;
 volatile uint8_t minutesLost = 0;
-volatile uint8_t ble_count = 0;
+volatile uint8_t bleCount = 0;
 volatile uint8_t sendMessage = 0;
 volatile uint8_t nonDiscoverable = 0;
-uint8_t bitPatterns[] = {2, 1, 2, 1, 0, 2, 0, 3, 3, 3, 0, 1, 0, 0, 0, 0};
 
 /* XL Axis Data*/
 int16_t x = 0;
@@ -80,8 +77,6 @@ int16_t z_diff;
 int dataAvailable = 0;
 
 SPI_HandleTypeDef hspi3;
-
-
 
 /**
   * @brief  The application entry point.
@@ -119,7 +114,6 @@ int main(void)
 	  // Wait for interrupt, only uncomment if low power is needed
 	  //__WFI();
 
-	  // From Proj2
 	  x_prev = x;
 	  y_prev = y;
 	  z_prev = z;
@@ -293,35 +287,25 @@ void Error_Handler(void)
 void TIM2_IRQHandler(void)
 {
 	TIM2->SR &= ~TIM_SR_UIF;
-	/* If there are no minutes lost or the index is greater than 15
-	 * rest the index to 0
-	 * else increment*/
-//	if (index == 15 || minutesLost == 0){
-	if (index == 15){
-		index = 0;
-	}
-	else{
-		index++;
-	}
 
 	/* if the timer 2 count has not reached its max, increment the count
 	 * else, that means a minute has passed, so increment the minutes lost */
-	if (tim2_count < TIME_TO_LOST){
-		tim2_count++;
+	if (tim2Count < TIME_TO_LOST){
+		tim2Count++;
 	}
 	else {
-		tim2_count = 0;
+		tim2Count = 0;
 		minutesLost++;
 	}
 
 	/*
-	 * Sends the bluetooth message after 10 seconds
+	 * Sends the Bluetooth message after 10 seconds
 	 * */
-	if (ble_count < TIME_TO_SEND){
-		ble_count++;
+	if (bleCount < TIME_TO_SEND){
+		bleCount++;
 	}
 	else {
-		ble_count = 0;
+		bleCount = 0;
 		sendMessage = 1;
 	}
 }
@@ -335,63 +319,64 @@ int _write(int file, char *ptr, int len) {
     return len;
 }
 
-
-void who_am_i() {
-	uint8_t reg = 0x0F;
-	uint8_t XL_id = 0;
-
-	if(!i2c_transaction(XL_ADDR, WRITE, &reg, 1)){
-		printf("Write Failed!\n");
-		return;
-	}
-
-	if(!i2c_transaction(XL_ADDR, READ, &XL_id, 1)){
-		printf("Read Failed!\n");
-		return;
-	}
-}
-
 void handleState() {
 	switch(currentState) {
 		case FOUND:
-			leds_set(0);
 			/* If the minutes lost is greater than 0 and the XL is not moving, go to lost state*/
 			if(isMoving()) {
-				tim2_count = 0;
+				tim2Count = 0;
 			}
 			else if (minutesLost > 0 && !isMoving()) {
 				currentState = LOST;
+				bleCount = 0;
 			}
 			break;
 
 		case LOST:
-			bitPatterns[12] = ((minutesLost & 0xC0) >> 6);
-			bitPatterns[13] = ((minutesLost & 0x30) >> 4);
-			bitPatterns[14] = ((minutesLost & 0x0C) >> 2);
-			bitPatterns[15] = minutesLost & 0x03;
-			leds_set(bitPatterns[index]);
-
-			if(sendMessage){
-				if(!nonDiscoverable && HAL_GPIO_ReadPin(BLE_INT_GPIO_Port,BLE_INT_Pin)){
-					catchBLE();
-				}else{
+			if(!nonDiscoverable && HAL_GPIO_ReadPin(BLE_INT_GPIO_Port,BLE_INT_Pin)){
+				catchBLE();
+			}
+			else{
+				if(sendMessage){
+					leds_set(3);
 					HAL_Delay(1000);
-					// Send a string to the NORDIC UART service, remember to not include the newline
-					unsigned char test_str[] = "I'm Lost!";
-					updateCharValue(NORDIC_UART_SERVICE_HANDLE, READ_CHAR_HANDLE, 0, sizeof(test_str)-1, test_str);
+
+				    unsigned char text[19] = "Jingles, Lost: ";
+
+				    int i = 0;
+				    while (text[i] != '\0') {
+				    	text[i] = text[i];
+				        i++;
+				    }
+
+				    if (minutesLost >= 100) {
+				    	text[i++] = (minutesLost / 100) % 10 + '0';
+				    } else{
+				    	text[i++] = ' ';
+				    }
+				    if (minutesLost >= 10) {
+				    	text[i++] = (minutesLost / 10) % 10 + '0';
+				    } else{
+				    	text[i++] = ' ';
+				    }
+				    text[i++] = (minutesLost % 10) + '0';
+
+				    text[i] = '\0';
+
+
+				    unsigned char message[19];  // Be careful changing this number!
+
+				    memcpy(message, text, sizeof(text));
+					updateCharValue(NORDIC_UART_SERVICE_HANDLE, READ_CHAR_HANDLE, 0, sizeof(message) - 1, message);
+					leds_set(0);
+					sendMessage = 0;
 				}
-				sendMessage = 0;
 			}
 
-
-			/* If it is moving
-			 * reset the timer 2 counter
-			 * reset the minutes lost
-			 * go to found state*/
 			if (isMoving()) {
-				tim2_count = 0;
+				tim2Count = 0;
 				minutesLost = 0;
-				ble_count = 0;
+				bleCount = 0;
 				sendMessage = 0;
 				currentState = FOUND;
 			}
@@ -407,14 +392,10 @@ int isMoving() {
 	return ((x_diff > XL_DEAD_BAND) || (y_diff > XL_DEAD_BAND) || (z_diff > XL_DEAD_BAND));
 }
 
-void printMessages() {
-	printf("X: %d, Y: %d, Z: %d\n", x, y, z);
+void lostMessage() {
 
-	if(isMoving()){
-		printf("We're Moving!\n");
-	}
-	printf("Hey there\n");
 }
+
 
 #ifdef  USE_FULL_ASSERT
 /**

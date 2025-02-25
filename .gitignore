@@ -187,3 +187,5 @@ youlostit-ble/youlostit-ble.launch
 *.prefs
 *.su
 *.cyclo
+/youlostit-ble/Debug
+/youlostit-ble/.settings
