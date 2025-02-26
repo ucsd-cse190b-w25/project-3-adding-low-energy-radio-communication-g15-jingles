@@ -70,12 +70,15 @@ uint8_t ADD_CUSTOM_CHAR_COMPLETE[]={0x04,0x0e,0x06,0x01,0x04,0xFD,0x00};
 
 uint8_t UPDATE_CHAR[]={0x01,0x06,0xFD,0x09,0xff,0xff,0xff,0xff,0x01,0x01,0x01,0x01,0x01,0x01,0x01};
 
-uint8_t DISCONNECT[] = {0x01, }; // TODO - fill this in
+// Packet Indicator, OPCODE[1], OPCODE[0], Parameter Length, ConnectionHandle[1], ConnectionHandle[0], Reason(Remote User Terminated Connection) = 0x13
+uint8_t DISCONNECT[] = {0x01, 0x06, 0x04, 0x03, 0x01, 0x00, 0x13}; // TODO - fill this in
 uint8_t EVENT_DISCONNECTED[]={0x04,0x05,0x04,0x00};
 
 uint8_t EVENT_CONNECTED[] = {0x04, 0x3E, 0x13, 0x01, 0x00};
 
-uint8_t ACI_GAP_SET_NON_DISCOVERABLE[] = {0x01, }; // TODO - fill this in
-uint8_t ACI_GAP_SET_NON_DISCOVERABLE_COMPLETE[] = {0x04, }; // TODO - fill this in
+// Packet Indicator, OPCODE[1], OPCODE[0], Parameter Length = 0x00 (No parameters)
+uint8_t ACI_GAP_SET_NON_DISCOVERABLE[] = {0x01, 0x81, 0xFC, 0x00}; // TODO - fill this in
+// Packet Indicator, Event Complete, Parameter Length?, Return Parameter Length?, CommandOpCode[1], CommandOpCode[0], Return Parameter
+uint8_t ACI_GAP_SET_NON_DISCOVERABLE_COMPLETE[] = {0x04, 0x0e, 0x04, 0x01, 0x81, 0xFC, 0x00}; // TODO - fill this in
 
 #endif /* INC_BLE_COMMANDS_H_ */
