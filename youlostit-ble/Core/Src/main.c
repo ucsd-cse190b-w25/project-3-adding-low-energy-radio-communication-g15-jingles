@@ -39,6 +39,9 @@
 #define TIME_TO_SEND        199
 #define XL_DEAD_BAND        5000
 
+#define DISCOVERABLE        1
+#define NONDISCOVERABLE     0
+
 void handleState();
 int isMoving();
 void lostMessage();
@@ -301,7 +304,7 @@ void TIM2_IRQHandler(void)
 	/*
 	 * Sends the Bluetooth message after 10 seconds
 	 * */
-	if (bleCount < TIME_TO_SEND){
+	if (bleCount < TIME_TO_SEND && minutesLost > 0){
 		bleCount++;
 	}
 	else {
@@ -326,9 +329,12 @@ void handleState() {
 			if(isMoving()) {
 				tim2Count = 0;
 			}
+			/* Move to LOST state*/
 			else if (minutesLost > 0 && !isMoving()) {
 				currentState = LOST;
 				bleCount = 0;
+
+				setDiscoverability(DISCOVERABLE);
 			}
 			break;
 
@@ -372,13 +378,16 @@ void handleState() {
 					sendMessage = 0;
 				}
 			}
-
+			/* Move to Found State*/
 			if (isMoving()) {
 				tim2Count = 0;
 				minutesLost = 0;
 				bleCount = 0;
 				sendMessage = 0;
 				currentState = FOUND;
+
+				setDiscoverability(NONDISCOVERABLE);
+				disconnectBLE();
 			}
 			break;
 	}
