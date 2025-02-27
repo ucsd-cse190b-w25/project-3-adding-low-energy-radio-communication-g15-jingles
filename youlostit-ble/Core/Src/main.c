@@ -35,7 +35,7 @@
 #include "ble.h"
 #include <stdlib.h>
 
-#define TIME_TO_LOST        99 //200  //1199
+#define TIME_TO_LOST        1199
 #define TIME_TO_SEND        199
 #define XL_DEAD_BAND        5000
 
@@ -116,6 +116,9 @@ int main(void)
   {
 	  // Wait for interrupt, only uncomment if low power is needed
 	  //__WFI();
+	  if(!nonDiscoverable && HAL_GPIO_ReadPin(BLE_INT_GPIO_Port,BLE_INT_Pin)){
+	  	catchBLE();
+	  }
 
 	  x_prev = x;
 	  y_prev = y;
@@ -339,44 +342,38 @@ void handleState() {
 			break;
 
 		case LOST:
-			if(!nonDiscoverable && HAL_GPIO_ReadPin(BLE_INT_GPIO_Port,BLE_INT_Pin)){
-				catchBLE();
-			}
-			else{
-				if(sendMessage){
-					leds_set(3);
-					HAL_Delay(1000);
 
-				    unsigned char text[19] = "Jingles, Lost: ";
+			if(sendMessage){
+				HAL_Delay(1000);
 
-				    int i = 0;
-				    while (text[i] != '\0') {
-				    	text[i] = text[i];
-				        i++;
-				    }
+				unsigned char text[19] = "Jingles, Lost: ";
 
-				    if (minutesLost >= 100) {
-				    	text[i++] = (minutesLost / 100) % 10 + '0';
-				    } else{
-				    	text[i++] = ' ';
-				    }
-				    if (minutesLost >= 10) {
-				    	text[i++] = (minutesLost / 10) % 10 + '0';
-				    } else{
-				    	text[i++] = ' ';
-				    }
-				    text[i++] = (minutesLost % 10) + '0';
-
-				    text[i] = '\0';
-
-
-				    unsigned char message[19];  // Be careful changing this number!
-
-				    memcpy(message, text, sizeof(text));
-					updateCharValue(NORDIC_UART_SERVICE_HANDLE, READ_CHAR_HANDLE, 0, sizeof(message) - 1, message);
-					leds_set(0);
-					sendMessage = 0;
+				int i = 0;
+				while (text[i] != '\0') {
+					text[i] = text[i];
+					i++;
 				}
+
+				if (minutesLost >= 100) {
+					text[i++] = (minutesLost / 100) % 10 + '0';
+				} else{
+					text[i++] = ' ';
+				}
+				if (minutesLost >= 10) {
+					text[i++] = (minutesLost / 10) % 10 + '0';
+				} else{
+					text[i++] = ' ';
+				}
+				text[i++] = (minutesLost % 10) + '0';
+
+				text[i] = '\0';
+
+
+				unsigned char message[19];  // Be careful changing this number!
+
+				memcpy(message, text, sizeof(text));
+				updateCharValue(NORDIC_UART_SERVICE_HANDLE, READ_CHAR_HANDLE, 0, sizeof(message) - 1, message);
+				sendMessage = 0;
 			}
 			/* Move to Found State*/
 			if (isMoving()) {
