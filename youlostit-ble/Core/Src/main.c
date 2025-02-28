@@ -35,8 +35,7 @@
 #include "ble.h"
 #include <stdlib.h>
 
-#define TIME_TO_LOST        1199
-#define TIME_TO_SEND        199
+#define TIME_TO_SEND        10
 #define XL_DEAD_BAND        5000
 
 #define DISCOVERABLE        1
@@ -60,11 +59,11 @@ enum state{
 };
 enum state currentState = FOUND;
 
-volatile uint16_t tim2Count = 0;
-volatile uint8_t minutesLost = 0;
-volatile uint8_t bleCount = 0;
+volatile uint8_t secondsLost = 0;
 volatile uint8_t sendMessage = 0;
 volatile uint8_t nonDiscoverable = 0;
+uint8_t convSeconds = 0;
+uint8_t minute = 20;
 
 /* XL Axis Data*/
 int16_t x = 0;
@@ -106,7 +105,7 @@ int main(void)
 
   leds_init();
   timer_init(TIM2);
-  timer_set_ms(TIM2, 50);
+  timer_set_ms(TIM2, 1000);
   i2c_init();
   lsm6dsl_init();
 
@@ -294,24 +293,12 @@ void TIM2_IRQHandler(void)
 {
 	TIM2->SR &= ~TIM_SR_UIF;
 
-	/* if the timer 2 count has not reached its max, increment the count
-	 * else, that means a minute has passed, so increment the minutes lost */
-	if (tim2Count < TIME_TO_LOST){
-		tim2Count++;
-	}
-	else {
-		tim2Count = 0;
-		minutesLost++;
-	}
+	secondsLost++;
 
 	/*
-	 * Sends the Bluetooth message after 10 seconds
+	 * Sends the Bluetooth message after 10 seconds when lost
 	 * */
-	if (bleCount < TIME_TO_SEND && minutesLost > 0){
-		bleCount++;
-	}
-	else {
-		bleCount = 0;
+	if (secondsLost % TIME_TO_SEND == 0 && secondsLost >= minute){
 		sendMessage = 1;
 	}
 }
@@ -328,14 +315,14 @@ int _write(int file, char *ptr, int len) {
 void handleState() {
 	switch(currentState) {
 		case FOUND:
+			setDiscoverability(NONDISCOVERABLE);
 			/* If the minutes lost is greater than 0 and the XL is not moving, go to lost state*/
 			if(isMoving()) {
-				tim2Count = 0;
+				secondsLost = 0;
 			}
 			/* Move to LOST state*/
-			else if (minutesLost > 0 && !isMoving()) {
+			else if (secondsLost >= minute && !isMoving()) {
 				currentState = LOST;
-				bleCount = 0;
 
 				setDiscoverability(DISCOVERABLE);
 			}
@@ -346,30 +333,24 @@ void handleState() {
 			if(sendMessage){
 				HAL_Delay(1000);
 
-				unsigned char text[19] = "Jingles, Lost: ";
+				unsigned char text[20] = "Jingles Lost: ";
 
-				int i = 0;
-				while (text[i] != '\0') {
-					text[i] = text[i];
-					i++;
+				convSeconds = secondsLost - minute;
+				int i = 14;
+
+				if (convSeconds >= 100) {
+					text[i++] = (convSeconds / 100) % 10 + '0';
 				}
 
-				if (minutesLost >= 100) {
-					text[i++] = (minutesLost / 100) % 10 + '0';
-				} else{
-					text[i++] = ' ';
+				if (convSeconds >= 10) {
+					text[i++] = (convSeconds / 10) % 10 + '0';
 				}
-				if (minutesLost >= 10) {
-					text[i++] = (minutesLost / 10) % 10 + '0';
-				} else{
-					text[i++] = ' ';
-				}
-				text[i++] = (minutesLost % 10) + '0';
+				text[i++] = '0';
 
 				text[i] = '\0';
 
 
-				unsigned char message[19];  // Be careful changing this number!
+				unsigned char message[20];  // Be careful changing this number!
 
 				memcpy(message, text, sizeof(text));
 				updateCharValue(NORDIC_UART_SERVICE_HANDLE, READ_CHAR_HANDLE, 0, sizeof(message) - 1, message);
@@ -377,9 +358,7 @@ void handleState() {
 			}
 			/* Move to Found State*/
 			if (isMoving()) {
-				tim2Count = 0;
-				minutesLost = 0;
-				bleCount = 0;
+				secondsLost = 0;
 				sendMessage = 0;
 				currentState = FOUND;
 
