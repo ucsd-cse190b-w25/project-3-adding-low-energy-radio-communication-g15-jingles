@@ -27,7 +27,7 @@ void timer_init(TIM_TypeDef* timer)
 	timer->SR &= ~TIM_SR_UIF;
 
 	// Setting max reload time. (Division factor is PSC + 1)
-	timer->PSC = 7999;
+	timer->PSC = 99;
 
 	// Enabling interrupt update bit
 	timer->DIER |= TIM_DIER_UIE;
