@@ -29,28 +29,23 @@
 
 /* Include LED driver */
 #include "leds.h"
-#include "lptimer.h"
+#include "timer.h"
 #include "i2c.h"
 #include "lsm6dsl.h"
 #include "ble.h"
 #include <stdlib.h>
 
+#define TIME_TO_SEND        10
 #define XL_DEAD_BAND        5000
-#define MINUTE				10 //60
-#define SEND_BLE            10
 
 #define DISCOVERABLE        1
 #define NONDISCOVERABLE     0
 
-#define FAST                1
-#define SLOW                0
-
 void handleState();
 int isMoving();
 void lostMessage();
-void sleep();
 
-void SystemClock_Config(int sysSpeed);
+void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_SPI3_Init(void);
 
@@ -68,6 +63,7 @@ volatile uint8_t secondsLost = 0;
 volatile uint8_t sendMessage = 0;
 volatile uint8_t nonDiscoverable = 0;
 uint8_t convSeconds = 0;
+uint8_t minute = 20;
 
 /* XL Axis Data*/
 int16_t x = 0;
@@ -94,7 +90,7 @@ int main(void)
   HAL_Init();
 
   /* Configure the system clock */
-  SystemClock_Config(FAST);
+  SystemClock_Config();
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
@@ -106,22 +102,19 @@ int main(void)
   HAL_GPIO_WritePin(BLE_RESET_GPIO_Port,BLE_RESET_Pin,GPIO_PIN_SET);
 
   ble_init();
-  setDiscoverability(NONDISCOVERABLE);
 
   leds_init();
-//  timer_init(TIM2);
-//  timer_set_ms(TIM2, 1000);
-  lptimer_init(LPTIM1);
-  lptimer_set_ms(LPTIM1, 1000);
+  timer_init(TIM2);
+  timer_set_ms(TIM2, 1000);
   i2c_init();
   lsm6dsl_init();
-  SystemClock_Config(SLOW);
 
   HAL_Delay(10);
 
   while (1)
   {
-
+	  // Wait for interrupt, only uncomment if low power is needed
+	  //__WFI();
 	  if(!nonDiscoverable && HAL_GPIO_ReadPin(BLE_INT_GPIO_Port,BLE_INT_Pin)){
 	  	catchBLE();
 	  }
@@ -130,27 +123,9 @@ int main(void)
 	  y_prev = y;
 	  z_prev = z;
 
-	  SystemClock_Config(FAST);
 	  lsm6dsl_read_xyz(&x, &y, &z);
-	  SystemClock_Config(SLOW);
 	  handleState();
-
-//	  sleep();
   }
-}
-
-void sleep() {
-	// Testing out sleep mode
-
-	// Setting LPR bit for Low-power sleep mode (page 166 on reference manual)
-	PWR->CR1 |= PWR_CR1_LPR;
-
-	HAL_SuspendTick();
-	__ASM volatile("wfi");
-	HAL_ResumeTick();
-
-	// Changing RRS to keep SRAM
-//	PWR->CR3 |= PWR_CR3_RRS_Pos;
 }
 
 /**
@@ -158,7 +133,7 @@ void sleep() {
   * @attention This changes the System clock frequency, make sure you reflect that change in your timer
   * @retval None
   */
-void SystemClock_Config(int sysSpeed)
+void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
@@ -177,12 +152,7 @@ void SystemClock_Config(int sysSpeed)
   RCC_OscInitStruct.MSIState = RCC_MSI_ON;
   RCC_OscInitStruct.MSICalibrationValue = 0;
   // This lines changes system clock frequency
-  if(sysSpeed == FAST) {
-	  RCC_OscInitStruct.MSIClockRange = RCC_MSIRANGE_7;
-  } else {
-	  RCC_OscInitStruct.MSIClockRange = RCC_MSIRANGE_0;
-  }
-
+  RCC_OscInitStruct.MSIClockRange = RCC_MSIRANGE_7;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
@@ -321,33 +291,16 @@ void Error_Handler(void)
 
 void TIM2_IRQHandler(void)
 {
-	LPTIM1->ISR &= ~TIM_SR_UIF;
+	TIM2->SR &= ~TIM_SR_UIF;
 
 	secondsLost++;
 
 	/*
 	 * Sends the Bluetooth message after 10 seconds when lost
 	 * */
-	if (secondsLost >= MINUTE && secondsLost % SEND_BLE == 0){
+	if (secondsLost % TIME_TO_SEND == 0 && secondsLost >= minute){
 		sendMessage = 1;
 	}
-}
-
-void LPTIM1_IRQHandler(void)
-{
-	if (LPTIM1->ISR & LPTIM_ISR_ARRM) {
-		LPTIM1->ICR |= LPTIM_ICR_ARRMCF;
-
-		secondsLost++;
-
-		/*
-		 * Sends the Bluetooth message after 10 seconds when lost
-		 * */
-		if (secondsLost >= MINUTE && secondsLost % SEND_BLE == 0){
-			sendMessage = 1;
-		}
-	}
-
 }
 
 // Redefine the libc _write() function so you can use printf in your code
@@ -362,32 +315,27 @@ int _write(int file, char *ptr, int len) {
 void handleState() {
 	switch(currentState) {
 		case FOUND:
+			setDiscoverability(NONDISCOVERABLE);
 			/* If the minutes lost is greater than 0 and the XL is not moving, go to lost state*/
 			if(isMoving()) {
 				secondsLost = 0;
 			}
 			/* Move to LOST state*/
-			else if (secondsLost >= MINUTE && !isMoving()) {
+			else if (secondsLost >= minute && !isMoving()) {
 				currentState = LOST;
 
-				SystemClock_Config(FAST);
 				setDiscoverability(DISCOVERABLE);
-				SystemClock_Config(SLOW);
-
-
-				leds_set(3);
 			}
 			break;
 
 		case LOST:
 
 			if(sendMessage){
-				SystemClock_Config(FAST);
 				HAL_Delay(1000);
 
 				unsigned char text[20] = "Jingles Lost: ";
 
-				convSeconds = secondsLost - MINUTE;
+				convSeconds = secondsLost - minute;
 				int i = 14;
 
 				if (convSeconds >= 100) {
@@ -407,7 +355,6 @@ void handleState() {
 				memcpy(message, text, sizeof(text));
 				updateCharValue(NORDIC_UART_SERVICE_HANDLE, READ_CHAR_HANDLE, 0, sizeof(message) - 1, message);
 				sendMessage = 0;
-				SystemClock_Config(SLOW);
 			}
 			/* Move to Found State*/
 			if (isMoving()) {
@@ -415,12 +362,8 @@ void handleState() {
 				sendMessage = 0;
 				currentState = FOUND;
 
-				SystemClock_Config(FAST);
 				setDiscoverability(NONDISCOVERABLE);
 				disconnectBLE();
-				SystemClock_Config(SLOW);
-
-				leds_set(0);
 			}
 			break;
 	}
@@ -432,6 +375,10 @@ int isMoving() {
 	z_diff = abs(z - z_prev);
 
 	return ((x_diff > XL_DEAD_BAND) || (y_diff > XL_DEAD_BAND) || (z_diff > XL_DEAD_BAND));
+}
+
+void lostMessage() {
+
 }
 
 
