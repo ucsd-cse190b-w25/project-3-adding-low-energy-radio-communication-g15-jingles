@@ -10,5 +10,6 @@
 
 void leds_init();
 void leds_set(uint8_t led);
+void leds_toggle();
 
 #endif /* LEDS_H_ */

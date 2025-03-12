@@ -52,3 +52,12 @@ void leds_set(uint8_t led)
 	GPIOB->ODR = (led & 2) ? GPIOB->ODR | LED2 : GPIOB->ODR & ~LED2 ;
 
 }
+
+
+void leds_toggle() {
+	if (GPIOA->ODR & LED1) {
+		leds_set(0);
+	} else {
+		leds_set(3);
+	}
+}

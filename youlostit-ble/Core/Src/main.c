@@ -29,14 +29,16 @@
 
 /* Include LED driver */
 #include "leds.h"
-#include "timer.h"
+//#include "timer.h"
+#include "lptimer.h"
 #include "i2c.h"
 #include "lsm6dsl.h"
 #include "ble.h"
 #include <stdlib.h>
 
-#define TIME_TO_SEND        10
+#define SEND_BLE	        10
 #define XL_DEAD_BAND        5000
+#define MINUTE				20
 
 #define DISCOVERABLE        1
 #define NONDISCOVERABLE     0
@@ -63,7 +65,6 @@ volatile uint8_t secondsLost = 0;
 volatile uint8_t sendMessage = 0;
 volatile uint8_t nonDiscoverable = 0;
 uint8_t convSeconds = 0;
-uint8_t minute = 20;
 
 /* XL Axis Data*/
 int16_t x = 0;
@@ -104,10 +105,12 @@ int main(void)
   ble_init();
 
   leds_init();
-  timer_init(TIM2);
-  timer_set_ms(TIM2, 1000);
+//  timer_init(TIM2);
+//  timer_set_ms(TIM2, 1000);
+  lptimer_init(LPTIM1);
+  lptimer_set_ms(LPTIM1, 1000);
   i2c_init();
-  lsm6dsl_init();
+//  lsm6dsl_init();
 
   HAL_Delay(10);
 
@@ -123,7 +126,7 @@ int main(void)
 	  y_prev = y;
 	  z_prev = z;
 
-	  lsm6dsl_read_xyz(&x, &y, &z);
+//	  lsm6dsl_read_xyz(&x, &y, &z);
 	  handleState();
   }
 }
@@ -289,18 +292,38 @@ void Error_Handler(void)
   /* USER CODE END Error_Handler_Debug */
 }
 
-void TIM2_IRQHandler(void)
+//void TIM2_IRQHandler(void)
+//{
+//	leds_toggle();
+//	TIM2->SR &= ~TIM_SR_UIF;
+//
+//	secondsLost++;
+//
+//	/*
+//	 * Sends the Bluetooth message after 10 seconds when lost
+//	 * */
+//	if (secondsLost % SEND_BLE == 0 && secondsLost >= MINUTE){
+//		sendMessage = 1;
+//	}
+//}
+
+void LPTIM1_IRQHandler(void)
 {
-	TIM2->SR &= ~TIM_SR_UIF;
+	leds_toggle();
+	if (LPTIM1->ISR & LPTIM_ISR_ARRM) {
+		LPTIM1->ICR |= LPTIM_ICR_ARRMCF;
+		// while((LPTIM1->ISR & LPTIM_ISR_ARROK) == 0);
 
-	secondsLost++;
+		secondsLost++;
 
-	/*
-	 * Sends the Bluetooth message after 10 seconds when lost
-	 * */
-	if (secondsLost % TIME_TO_SEND == 0 && secondsLost >= minute){
-		sendMessage = 1;
+		/*
+		 * Sends the Bluetooth message after 10 seconds when lost
+		 * */
+		if (secondsLost >= MINUTE && secondsLost % SEND_BLE == 0){
+			sendMessage = 1;
+		}
 	}
+
 }
 
 // Redefine the libc _write() function so you can use printf in your code
@@ -321,10 +344,11 @@ void handleState() {
 				secondsLost = 0;
 			}
 			/* Move to LOST state*/
-			else if (secondsLost >= minute && !isMoving()) {
+			else if (secondsLost >= MINUTE && !isMoving()) {
 				currentState = LOST;
 
 				setDiscoverability(DISCOVERABLE);
+//				leds_set(3);
 			}
 			break;
 
@@ -335,7 +359,7 @@ void handleState() {
 
 				unsigned char text[20] = "Jingles Lost: ";
 
-				convSeconds = secondsLost - minute;
+				convSeconds = secondsLost - MINUTE;
 				int i = 14;
 
 				if (convSeconds >= 100) {
@@ -364,6 +388,7 @@ void handleState() {
 
 				setDiscoverability(NONDISCOVERABLE);
 				disconnectBLE();
+//				leds_set(0);
 			}
 			break;
 	}
