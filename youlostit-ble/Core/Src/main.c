@@ -47,6 +47,8 @@ void handleState();
 int isMoving();
 void lostMessage();
 void sleep();
+void turnOffPeriph();
+void toggleClkSpeed();
 
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
@@ -94,6 +96,8 @@ int main(void)
   /* Configure the system clock */
   SystemClock_Config();
 
+  turnOffPeriph();
+
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_SPI3_Init();
@@ -107,16 +111,19 @@ int main(void)
 
   leds_init();
   lptimer_init(LPTIM1);
-  lptimer_set_ms(LPTIM1, 250);
+  lptimer_set_ms(LPTIM1, 2500);
   i2c_init();
   lsm6dsl_init();
 
+  toggleClkSpeed();
   HAL_Delay(10);
+
 
   while (1)
   {
 	  // Wait for interrupt, only uncomment if low power is needed
 	  //__WFI();
+	  toggleClkSpeed();
 	  if(!nonDiscoverable && HAL_GPIO_ReadPin(BLE_INT_GPIO_Port,BLE_INT_Pin)){
 	  	catchBLE();
 	  }
@@ -126,29 +133,50 @@ int main(void)
 	  z_prev = z;
 
 	  lsm6dsl_read_xyz(&x, &y, &z);
+	  toggleClkSpeed();
+
 	  handleState();
 	  sleep();
   }
 }
 
+void toggleClkSpeed() {
+
+	// if MIS Range is not 100kH (0000), then change to 0, else change to 8Mhz
+	if(RCC->CR & RCC_CR_MSIRANGE) {
+		RCC->CR &= ~RCC_CR_MSIRANGE;
+	}
+		else {
+		RCC->CR |= RCC_CR_MSIRANGE_7;
+	}
+}
+
+void turnOffPeriph() {
+	// Disabling PPL to save power
+	RCC->PLLCFGR &= ~RCC_PLLCFGR_PLLPEN;
+	RCC->PLLSAI1CFGR &= ~RCC_PLLSAI1CFGR_PLLSAI1PEN;
+	RCC->PLLSAI2CFGR &= ~RCC_PLLSAI2CFGR_PLLSAI2PEN;
+
+	// Might need to turn back on
+	RCC->AHB1ENR &= ~RCC_AHB1ENR_CRCEN;
+	RCC->AHB1SMENR &= ~RCC_AHB1SMENR_CRCSMEN;
+
+
+	RCC->AHB1SMENR &= ~(RCC_AHB1SMENR_DMA1SMEN | RCC_AHB1SMENR_DMA2SMEN | RCC_AHB1SMENR_TSCSMEN);
+	RCC->AHB2SMENR &= ~(RCC_AHB2SMENR_GPIOFSMEN | RCC_AHB2SMENR_GPIOGSMEN | RCC_AHB2SMENR_GPIOHSMEN
+						| RCC_AHB2SMENR_ADCSMEN);
+	RCC->AHB3SMENR &= ~(RCC_AHB3SMENR_QSPISMEN | RCC_AHB3SMENR_FMCSMEN);
+	RCC->APB1SMENR1 = RCC_APB1SMENR1_LPTIM1SMEN;
+	RCC->APB1SMENR2 = 0;
+	RCC->APB2SMENR = RCC_APB2SMENR_SYSCFGSMEN;
+
+}
+
 void sleep() {
-	// figure this out
-
 	HAL_SuspendTick();
-	// Setting up for Standby Mode
-//	PWR->CR1 &= ~PWR_CR1_LPMS;
-//	PWR->CR1 |= PWR_CR1_LPMS_STANDBY;
-//
-//	// Setting RRS bit for Standby mode
-//	PWR->CR3 |= PWR_CR3_RRS;
-//
-//	// Setting SLEEPDEEP Bit
-//	SCB->SCR = SCB_SCR_SLEEPDEEP_Msk;
-
-	// figure this out
+	SysTick->CTRL &= ~SysTick_CTRL_ENABLE_Msk;
 	HAL_PWREx_EnterSTOP2Mode(PWR_SLEEPENTRY_WFI);
-
-//	__ASM volatile("wfi");
+	SysTick->CTRL |= SysTick_CTRL_ENABLE_Msk;
 	HAL_ResumeTick();
 }
 
@@ -315,12 +343,12 @@ void Error_Handler(void)
 
 void LPTIM1_IRQHandler(void)
 {
-//	leds_toggle();
+	leds_toggle();
 	if (LPTIM1->ISR & LPTIM_ISR_ARRM) {
 		LPTIM1->ICR |= LPTIM_ICR_ARRMCF;
 		// while((LPTIM1->ISR & LPTIM_ISR_ARROK) == 0);
 
-		secondsLost++;
+		secondsLost += 10;
 
 		/*
 		 * Sends the Bluetooth message after 10 seconds when lost
@@ -344,7 +372,9 @@ int _write(int file, char *ptr, int len) {
 void handleState() {
 	switch(currentState) {
 		case FOUND:
+			toggleClkSpeed();
 			setDiscoverability(NONDISCOVERABLE);
+			toggleClkSpeed();
 //			standbyBle();
 			/* If the minutes lost is greater than 0 and the XL is not moving, go to lost state*/
 			if(isMoving()) {
@@ -354,14 +384,17 @@ void handleState() {
 			else if (secondsLost >= MINUTE && !isMoving()) {
 				currentState = LOST;
 
+				toggleClkSpeed();
 				setDiscoverability(DISCOVERABLE);
-				leds_set(3);
+				toggleClkSpeed();
+//				leds_set(3);
 			}
 			break;
 
 		case LOST:
 
 			if(sendMessage){
+				toggleClkSpeed();
 				HAL_Delay(1000);
 
 				unsigned char text[20] = "Jingles Lost: ";
@@ -386,6 +419,7 @@ void handleState() {
 				memcpy(message, text, sizeof(text));
 				updateCharValue(NORDIC_UART_SERVICE_HANDLE, READ_CHAR_HANDLE, 0, sizeof(message) - 1, message);
 				sendMessage = 0;
+				toggleClkSpeed();
 			}
 			/* Move to Found State*/
 			if (isMoving()) {
@@ -393,10 +427,13 @@ void handleState() {
 				sendMessage = 0;
 				currentState = FOUND;
 
+				toggleClkSpeed();
 				setDiscoverability(NONDISCOVERABLE);
 				disconnectBLE();
 				standbyBle();
-				leds_set(0);
+				toggleClkSpeed();
+
+//				leds_set(0);
 			}
 			break;
 	}

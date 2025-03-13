@@ -72,7 +72,6 @@ void lptimer_reset(LPTIM_TypeDef* timer)
 void lptimer_set_ms(LPTIM_TypeDef* timer, uint16_t period)
 {
 	timer->ARR = period - 1;
-//	while((LPTIM1->ISR & LPTIM_ISR_ARROK) == 0);
 
 }
 
