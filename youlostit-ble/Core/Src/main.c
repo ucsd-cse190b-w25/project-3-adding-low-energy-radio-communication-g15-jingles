@@ -46,6 +46,7 @@
 void handleState();
 int isMoving();
 void lostMessage();
+void sleep();
 
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
@@ -105,12 +106,10 @@ int main(void)
   ble_init();
 
   leds_init();
-//  timer_init(TIM2);
-//  timer_set_ms(TIM2, 1000);
   lptimer_init(LPTIM1);
-  lptimer_set_ms(LPTIM1, 1000);
+  lptimer_set_ms(LPTIM1, 250);
   i2c_init();
-//  lsm6dsl_init();
+  lsm6dsl_init();
 
   HAL_Delay(10);
 
@@ -126,9 +125,31 @@ int main(void)
 	  y_prev = y;
 	  z_prev = z;
 
-//	  lsm6dsl_read_xyz(&x, &y, &z);
+	  lsm6dsl_read_xyz(&x, &y, &z);
 	  handleState();
+	  sleep();
   }
+}
+
+void sleep() {
+	// figure this out
+
+	HAL_SuspendTick();
+	// Setting up for Standby Mode
+//	PWR->CR1 &= ~PWR_CR1_LPMS;
+//	PWR->CR1 |= PWR_CR1_LPMS_STANDBY;
+//
+//	// Setting RRS bit for Standby mode
+//	PWR->CR3 |= PWR_CR3_RRS;
+//
+//	// Setting SLEEPDEEP Bit
+//	SCB->SCR = SCB_SCR_SLEEPDEEP_Msk;
+
+	// figure this out
+	HAL_PWREx_EnterSTOP2Mode(PWR_SLEEPENTRY_WFI);
+
+//	__ASM volatile("wfi");
+	HAL_ResumeTick();
 }
 
 /**
@@ -292,24 +313,9 @@ void Error_Handler(void)
   /* USER CODE END Error_Handler_Debug */
 }
 
-//void TIM2_IRQHandler(void)
-//{
-//	leds_toggle();
-//	TIM2->SR &= ~TIM_SR_UIF;
-//
-//	secondsLost++;
-//
-//	/*
-//	 * Sends the Bluetooth message after 10 seconds when lost
-//	 * */
-//	if (secondsLost % SEND_BLE == 0 && secondsLost >= MINUTE){
-//		sendMessage = 1;
-//	}
-//}
-
 void LPTIM1_IRQHandler(void)
 {
-	leds_toggle();
+//	leds_toggle();
 	if (LPTIM1->ISR & LPTIM_ISR_ARRM) {
 		LPTIM1->ICR |= LPTIM_ICR_ARRMCF;
 		// while((LPTIM1->ISR & LPTIM_ISR_ARROK) == 0);
@@ -339,6 +345,7 @@ void handleState() {
 	switch(currentState) {
 		case FOUND:
 			setDiscoverability(NONDISCOVERABLE);
+//			standbyBle();
 			/* If the minutes lost is greater than 0 and the XL is not moving, go to lost state*/
 			if(isMoving()) {
 				secondsLost = 0;
@@ -348,7 +355,7 @@ void handleState() {
 				currentState = LOST;
 
 				setDiscoverability(DISCOVERABLE);
-//				leds_set(3);
+				leds_set(3);
 			}
 			break;
 
@@ -388,7 +395,8 @@ void handleState() {
 
 				setDiscoverability(NONDISCOVERABLE);
 				disconnectBLE();
-//				leds_set(0);
+				standbyBle();
+				leds_set(0);
 			}
 			break;
 	}

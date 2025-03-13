@@ -41,7 +41,7 @@ void lptimer_init(LPTIM_TypeDef* timer)
 
 	// Setting prescalar to 32,
 	timer->CFGR &= ~LPTIM_CFGR_PRESC;
-	timer->CFGR |= (LPTIM_CFGR_PRESC_0 | LPTIM_CFGR_PRESC_2);
+	timer->CFGR |= (LPTIM_CFGR_PRESC_0 | LPTIM_CFGR_PRESC_1 | LPTIM_CFGR_PRESC_2);
 	timer->CFGR &= ~LPTIM_CFGR_TRIGEN;
 
 	timer->ICR = LPTIM_ICR_ARRMCF | LPTIM_ICR_CMPMCF | LPTIM_ICR_EXTTRIGCF |
@@ -69,9 +69,9 @@ void lptimer_reset(LPTIM_TypeDef* timer)
 
 }
 
-void lptimer_set_ms(LPTIM_TypeDef* timer, uint16_t period_ms)
+void lptimer_set_ms(LPTIM_TypeDef* timer, uint16_t period)
 {
-	timer->ARR = period_ms - 1;
+	timer->ARR = period - 1;
 //	while((LPTIM1->ISR & LPTIM_ISR_ARROK) == 0);
 
 }
