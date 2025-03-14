@@ -134,4 +134,68 @@ uint8_t i2c_transaction(uint8_t address, uint8_t dir, uint8_t* data, uint8_t len
 
 }
 
+void disableI2C(void)
+{
+    // First disable the I2C peripheral
+    I2C2->CR1 &= ~I2C_CR1_PE;
+
+    // Disable I2C2 clock to save power
+    RCC->APB1ENR1 &= ~RCC_APB1ENR1_I2C2EN;
+
+    // Configure I2C pins (PB10 and PB11) to analog mode to reduce power consumption
+    // Clear alternate function mode
+    GPIOB->MODER &= ~(GPIO_MODER_MODE10 | GPIO_MODER_MODE11);
+    // Set to analog mode (11)
+    GPIOB->MODER |= (GPIO_MODER_MODE10_0 | GPIO_MODER_MODE10_1 |
+                      GPIO_MODER_MODE11_0 | GPIO_MODER_MODE11_1);
+
+    // Remove pull-up/pull-down resistors
+    GPIOB->PUPDR &= ~(GPIO_PUPDR_PUPD10 | GPIO_PUPDR_PUPD11);
+
+    // Disable output type configurations
+    GPIOB->OTYPER &= ~(GPIO_OTYPER_OT10 | GPIO_OTYPER_OT11);
+}
+
+void enableI2C(void)
+{
+    // First make sure peripheral is disabled
+    I2C2->CR1 &= ~I2C_CR1_PE;
+
+    // Enable I2C2 clock
+    RCC->APB1ENR1 |= RCC_APB1ENR1_I2C2EN;
+
+    // Make sure GPIOB clock is enabled
+    RCC->AHB2ENR |= RCC_AHB2ENR_GPIOBEN;
+
+    // Configure PB10 and PB11 back to I2C mode
+    // Set to alternate function mode (10)
+    GPIOB->MODER &= ~(GPIO_MODER_MODE10 | GPIO_MODER_MODE11);
+    GPIOB->MODER |= (GPIO_MODER_MODE10_1 | GPIO_MODER_MODE11_1);
+
+    // Set to pull-down (10)
+    GPIOB->PUPDR &= ~(GPIO_PUPDR_PUPD10 | GPIO_PUPDR_PUPD11);
+    GPIOB->PUPDR |= (GPIO_PUPDR_PUPD10_1 | GPIO_PUPDR_PUPD11_1);
+
+    // Set to open-drain
+    GPIOB->OTYPER |= (GPIO_OTYPER_OT10 | GPIO_OTYPER_OT11);
+
+    // Set to medium speed
+    GPIOB->OSPEEDR &= ~((GPIO_OSPEEDR_OSPEED10_Pos) | (GPIO_OSPEEDR_OSPEED11_Pos));
+    GPIOB->OSPEEDR |= ((0x1 << GPIO_OSPEEDR_OSPEED10_Pos) | (0x1 << GPIO_OSPEEDR_OSPEED11_Pos));
+
+    // Set alternate function 4 for I2C2
+    GPIOB->AFR[1] &= ~(GPIO_AFRH_AFSEL10 | GPIO_AFRH_AFSEL11);
+    GPIOB->AFR[1] |= (GPIO_AFRH_AFSEL10_2 | GPIO_AFRH_AFSEL11_2);
+
+    // Restore I2C timing configuration
+    I2C2->TIMINGR &= ~(I2C_TIMINGR_PRESC | I2C_TIMINGR_SCLL | I2C_TIMINGR_SCLH |
+                     I2C_TIMINGR_SDADEL | I2C_TIMINGR_SCLDEL);
+    I2C2->TIMINGR |= ((0xC7 << I2C_TIMINGR_SCLL_Pos) | (0xC3 << I2C_TIMINGR_SCLH_Pos) |
+                     (0x02 << I2C_TIMINGR_SDADEL_Pos) | (0x04 << I2C_TIMINGR_SCLDEL_Pos));
+
+    // Enable I2C peripheral
+    I2C2->CR1 |= I2C_CR1_PE;
+}
+
+
 

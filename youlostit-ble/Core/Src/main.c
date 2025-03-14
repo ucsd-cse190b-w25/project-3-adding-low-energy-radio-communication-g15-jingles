@@ -28,7 +28,7 @@
 #include <stm32l475xx.h>
 
 /* Include LED driver */
-#include "leds.h"
+//#include "leds.h"
 //#include "timer.h"
 #include "lptimer.h"
 #include "i2c.h"
@@ -38,7 +38,7 @@
 
 #define SEND_BLE	        10
 #define XL_DEAD_BAND        5000
-#define MINUTE				20
+#define MINUTE				60
 
 #define DISCOVERABLE        1
 #define NONDISCOVERABLE     0
@@ -49,6 +49,9 @@ void lostMessage();
 void sleep();
 void turnOffPeriph();
 void toggleClkSpeed();
+void disableUnnecessaryInterrupts(void);
+void disableAllEXTI(void);
+void ClearPendingInterrupts(void);
 
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
@@ -79,6 +82,10 @@ int16_t z_prev = 0;
 int16_t x_diff;
 int16_t y_diff;
 int16_t z_diff;
+uint8_t moving = 0;
+uint32_t EXTI_IMR1 = 0;
+uint32_t EXTI_IMR2 = 0;
+
 
 int dataAvailable = 0;
 
@@ -109,12 +116,15 @@ int main(void)
 
   ble_init();
 
-  leds_init();
+//  leds_init();
   lptimer_init(LPTIM1);
   lptimer_set_ms(LPTIM1, 2500);
   i2c_init();
   lsm6dsl_init();
-
+  setDiscoverability(NONDISCOVERABLE);
+  disableI2C();
+  // disableUnnecessaryInterrupts();
+//  DisableAllEXTI();
   toggleClkSpeed();
   HAL_Delay(10);
 
@@ -123,22 +133,43 @@ int main(void)
   {
 	  // Wait for interrupt, only uncomment if low power is needed
 	  //__WFI();
-	  toggleClkSpeed();
-	  if(!nonDiscoverable && HAL_GPIO_ReadPin(BLE_INT_GPIO_Port,BLE_INT_Pin)){
-	  	catchBLE();
-	  }
 
 	  x_prev = x;
 	  y_prev = y;
 	  z_prev = z;
-
-	  lsm6dsl_read_xyz(&x, &y, &z);
 	  toggleClkSpeed();
+	  if(!nonDiscoverable && HAL_GPIO_ReadPin(BLE_INT_GPIO_Port,BLE_INT_Pin)){
+	  	catchBLE();
+	  }
+	  enableI2C();
+	  lsm6dsl_read_xyz(&x, &y, &z);
+	  disableI2C();
+	  toggleClkSpeed();
+	  moving = isMoving();
 
 	  handleState();
 	  sleep();
   }
 }
+
+void disableUnnecessaryInterrupts(void) {
+    for (int irq = WWDG_IRQn; irq <= RNG_IRQn; irq++) {
+        if (irq != LPTIM1_IRQn && irq != EXTI9_5_IRQn && irq != SPI3_IRQn) {
+            NVIC_DisableIRQ((IRQn_Type)irq);
+        }
+    }
+}
+
+void disableAllEXTI(void) {
+    EXTI->IMR1 = 0x00000000;  // Mask EXTI lines 0-31
+    EXTI->IMR2 = 0x00000000;  // Mask EXTI lines 32+
+}
+
+void enableAllEXTI(void) {
+    EXTI->IMR1 = EXTI_IMR1;  // Mask EXTI lines 0-31
+    EXTI->IMR2 = EXTI_IMR2;  // Mask EXTI lines 32+
+}
+
 
 void toggleClkSpeed() {
 
@@ -149,6 +180,14 @@ void toggleClkSpeed() {
 		else {
 		RCC->CR |= RCC_CR_MSIRANGE_7;
 	}
+}
+
+void ClearPendingInterrupts(void) {
+    for (int irq = WWDG_IRQn; irq <= RNG_IRQn; irq++) {
+        if (irq != LPTIM1_IRQn) {
+            NVIC_ClearPendingIRQ((IRQn_Type)irq);
+        }
+    }
 }
 
 void turnOffPeriph() {
@@ -173,11 +212,17 @@ void turnOffPeriph() {
 }
 
 void sleep() {
+	EXTI_IMR1 = EXTI->IMR1;
+	EXTI_IMR2 = EXTI->IMR2;
+
+//	disableAllEXTI();
 	HAL_SuspendTick();
 	SysTick->CTRL &= ~SysTick_CTRL_ENABLE_Msk;
 	HAL_PWREx_EnterSTOP2Mode(PWR_SLEEPENTRY_WFI);
 	SysTick->CTRL |= SysTick_CTRL_ENABLE_Msk;
 	HAL_ResumeTick();
+//	enableAllEXTI();
+
 }
 
 /**
@@ -343,7 +388,7 @@ void Error_Handler(void)
 
 void LPTIM1_IRQHandler(void)
 {
-	leds_toggle();
+//	leds_toggle();
 	if (LPTIM1->ISR & LPTIM_ISR_ARRM) {
 		LPTIM1->ICR |= LPTIM_ICR_ARRMCF;
 		// while((LPTIM1->ISR & LPTIM_ISR_ARROK) == 0);
@@ -372,16 +417,12 @@ int _write(int file, char *ptr, int len) {
 void handleState() {
 	switch(currentState) {
 		case FOUND:
-			toggleClkSpeed();
-			setDiscoverability(NONDISCOVERABLE);
-			toggleClkSpeed();
-//			standbyBle();
 			/* If the minutes lost is greater than 0 and the XL is not moving, go to lost state*/
-			if(isMoving()) {
+			if(moving) {
 				secondsLost = 0;
 			}
 			/* Move to LOST state*/
-			else if (secondsLost >= MINUTE && !isMoving()) {
+			else if (secondsLost >= MINUTE && !moving) {
 				currentState = LOST;
 
 				toggleClkSpeed();
@@ -422,7 +463,7 @@ void handleState() {
 				toggleClkSpeed();
 			}
 			/* Move to Found State*/
-			if (isMoving()) {
+			if (moving) {
 				secondsLost = 0;
 				sendMessage = 0;
 				currentState = FOUND;

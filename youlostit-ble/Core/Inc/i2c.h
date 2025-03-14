@@ -13,6 +13,8 @@
 #define TIMEOUT 1000000
 void i2c_init();
 uint8_t i2c_transaction(uint8_t address, uint8_t dir, uint8_t* data, uint8_t len);
+void disableI2C(void);
+void enableI2C(void);
 
 
 #endif /* I2C_H_ */
